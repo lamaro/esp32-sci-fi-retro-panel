@@ -1,6 +1,6 @@
 # ESP32 Retro Sci-Fi Panel
 
-A local Next.js control panel for the [ESP32 Retro Sci-Fi modules](https://github.com/lamaro/esp32-sci-fi-retro). It runs on your computer, talks to the board over your Wi-Fi network and switches its screen modes: status, console, hacker terminal, fatal error, sunset, colors, animation, random and your own text.
+A local Next.js control panel for the [ESP32 Retro Sci-Fi modules](https://github.com/lamaro/esp32-sci-fi-retro). It runs on your computer, talks to the board over your Wi-Fi network and switches its screen modes: status, console, hacker terminal, fatal error, weather, sunset, colors, animation, random and your own text.
 
 ```
 browser ──► Next.js on localhost ──(HTTP + token, LAN)──► ESP32
@@ -65,13 +65,14 @@ Open `wifi_secrets.py` and fill in `WIFI_SSID`, `WIFI_PASSWORD` and `API_TOKEN` 
 mpremote connect "$PORT" fs cp wifi_secrets.py :wifi_secrets.py &&
 mpremote connect "$PORT" fs cp font5x7.py :font5x7.py &&
 mpremote connect "$PORT" fs cp display_ui.py :display_ui.py &&
+mpremote connect "$PORT" fs cp weather.py :weather.py &&
 mpremote connect "$PORT" fs cp main.py :main.py &&
 mpremote connect "$PORT" reset
 ```
 
 The board connects to Wi-Fi and shows its IP on the screen. To see the boot log, run `mpremote connect "$PORT" repl` and press **EN** (exit with **Ctrl+]**).
 
-To update the firmware later, copy only `font5x7.py`, `display_ui.py` and `main.py`, then reset.
+To update the firmware later, copy only `font5x7.py`, `display_ui.py`, `weather.py` and `main.py`, then reset.
 
 ## 6. Run the panel
 

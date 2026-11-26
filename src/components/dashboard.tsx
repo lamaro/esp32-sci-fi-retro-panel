@@ -13,6 +13,7 @@ type DeviceState = {
   display?: string;
   scene?: string;
   textSupported?: boolean;
+  weatherCity?: string;
   message?: string;
 };
 
@@ -40,6 +41,8 @@ export default function Dashboard() {
   const [device, setDevice] = useState<DeviceState>(initialState);
   const [draft, setDraft] = useState("");
   const [textFeedback, setTextFeedback] = useState("");
+  const [cityDraft, setCityDraft] = useState("");
+  const [cityFeedback, setCityFeedback] = useState("");
   const lines = displayLines(draft);
   const [displayBusy, setDisplayBusy] = useState(false);
   const [restartBusy, setRestartBusy] = useState(false);
@@ -63,23 +66,26 @@ export default function Dashboard() {
     return () => window.clearInterval(timer);
   }, [refresh]);
 
-  async function setDisplay(mode: "status" | "sunset" | "colors" | "animation" | "text" | "console" | "hacker" | "fatal" | "random") {
+  async function setDisplay(mode: "status" | "sunset" | "colors" | "animation" | "text" | "console" | "hacker" | "fatal" | "weather" | "random", city?: string) {
     if (!device.connected || displayBusy) return;
     setTextFeedback("");
+    setCityFeedback("");
     setDisplayBusy(true);
     try {
       const response = await fetch("/api/device", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ display: mode, ...(mode === "text" ? { text: draft } : {}) }),
+        body: JSON.stringify({ display: mode, ...(mode === "text" ? { text: draft } : {}), ...(city ? { city } : {}) }),
       });
       const result = (await response.json()) as DeviceState;
       if (!response.ok) throw new Error(result.message ?? "No se pudo cambiar la pantalla.");
       setDevice((current) => ({ ...current, ...result }));
       if (mode === "text") setTextFeedback("Mensaje enviado a la pantalla.");
+      if (city) { setCityFeedback(result.message ?? ""); setCityDraft(""); }
       await refresh();
     } catch (error) {
       if (mode === "text") setTextFeedback(error instanceof Error ? error.message : "Error de conexión.");
+      if (city) setCityFeedback(error instanceof Error ? error.message : "Error de conexión.");
       setDevice((current) => ({ ...current, message: error instanceof Error ? error.message : "Error de conexión." }));
     } finally {
       setDisplayBusy(false);
@@ -116,6 +122,7 @@ export default function Dashboard() {
     ["console", "Consola"],
     ["hacker", "Terminal hacker"],
     ["fatal", "Error fatal"],
+    ["weather", "Clima"],
     ["random", "Aleatorio"],
   ] as const;
   const labelOf = (mode?: string) => modes.find(([key]) => key === mode)?.[1];
@@ -170,6 +177,7 @@ export default function Dashboard() {
               {online && previewMode === "console" && <span className="preview-console">{">>> import main\nwifi: connected\napi: :80\n>>> _"}</span>}
               {online && previewMode === "hacker" && <span className="preview-console">{"$ ssh root@node-7\nACCESS GRANTED\n3F9A 4B1C D29E\nDECR[######] 60%"}</span>}
               {online && previewMode === "fatal" && <span className="preview-fatal">FATAL<br />ERROR</span>}
+              {online && previewMode === "weather" && <span>CLIMA<br />{device.weatherCity}</span>}
               {online && device.display === "text" && <span>TEXTO ACTIVO</span>}
               {(!online || !currentMode) && <span>EN ESPERA</span>}
             </div>
@@ -204,6 +212,23 @@ export default function Dashboard() {
                 </button>
                 {online && !device.textSupported && <small>Actualizá los dos archivos de la placa para habilitar el texto.</small>}
                 <small role="status">{textFeedback}</small>
+            </form>
+            <form className="display-text-form weather-form" onSubmit={(event) => {
+                event.preventDefault();
+                if (cityDraft.trim()) void setDisplay("weather", cityDraft);
+              }}>
+                <label htmlFor="weather-city">Ciudad del clima</label>
+                <input id="weather-city" value={cityDraft} maxLength={60}
+                  placeholder={device.weatherCity ? device.weatherCity.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) : "Buenos Aires"}
+                  onChange={(event) => { setCityDraft(event.target.value); setCityFeedback(""); }}
+                  aria-describedby="weather-city-help" />
+                <small id="weather-city-help">
+                  Actual: {device.weatherCity ?? "—"}. Para desambiguar, escribí &quot;Ciudad, país&quot;. Los datos son de Open-Meteo y la placa los consulta cada 15 min, solo con la escena en pantalla.
+                </small>
+                <button className="primary-button" disabled={!online || !cityDraft.trim() || displayBusy}>
+                  Mostrar clima
+                </button>
+                <small role="status">{cityFeedback}</small>
             </form>
           </article>
         </section>
