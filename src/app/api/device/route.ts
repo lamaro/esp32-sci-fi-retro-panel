@@ -40,27 +40,58 @@ function isPrivateIpv4(hostname: string) {
   return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
 }
 
-function getDeviceConfig() {
-  const rawUrl = process.env.ESP32_BASE_URL;
-  const token = process.env.ESP32_API_TOKEN;
-  if (!rawUrl || !token) return null;
+type Device = { id: string; name: string; baseUrl: string };
 
+// Acepta una IP privada o un nombre .local, con o sin http://, sin rutas.
+function localOrigin(raw: string) {
   try {
-    const url = new URL(rawUrl);
+    const url = new URL(/^https?:\/\//i.test(raw) ? raw : `http://${raw}`);
     const localHost = isPrivateIpv4(url.hostname) || url.hostname.toLowerCase().endsWith(".local");
     if (url.protocol !== "http:" || !localHost || url.username || url.password || url.search || url.hash || (url.pathname !== "/" && url.pathname !== "")) return null;
-    return { baseUrl: url.origin, token };
+    return url.origin;
   } catch {
     return null;
   }
 }
 
-async function callDevice(path: "/api/status" | "/api/led" | "/api/restart" | "/api/display", init?: RequestInit) {
-  const config = getDeviceConfig();
-  if (!config) return null;
+function slug(name: string) {
+  return name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "placa";
+}
 
+// ESP32_DEVICES="Consola=192.168.1.50,Holo=192.168.1.51" (nombre=IP, separadas por comas).
+// Si no está, usa ESP32_BASE_URL como una sola placa. Todas comparten ESP32_API_TOKEN.
+function getDevices(): Device[] {
+  const devices: Device[] = [];
+  const list = process.env.ESP32_DEVICES?.trim();
+  const entries = list
+    ? list.split(",").map((entry) => entry.trim()).filter(Boolean).map((entry) => {
+        const at = entry.indexOf("=");
+        return at > 0 ? [entry.slice(0, at).trim(), entry.slice(at + 1).trim()] : [entry, entry];
+      })
+    : process.env.ESP32_BASE_URL ? [["ESP32", process.env.ESP32_BASE_URL.trim()]] : [];
+  for (const [name, address] of entries) {
+    const baseUrl = localOrigin(address);
+    if (!baseUrl || !name) continue;
+    let id = slug(name);
+    for (let n = 2; devices.some((device) => device.id === id); n++) id = `${slug(name)}-${n}`;
+    devices.push({ id, name: name.slice(0, 40), baseUrl });
+  }
+  return devices;
+}
+
+function getConfig(deviceId?: string | null) {
+  const token = process.env.ESP32_API_TOKEN;
+  const devices = getDevices();
+  if (!token || devices.length === 0) return null;
+  const device = devices.find((d) => d.id === deviceId) ?? devices[0];
+  return { token, device, devices: devices.map(({ id, name }) => ({ id, name })) };
+}
+
+type Config = NonNullable<ReturnType<typeof getConfig>>;
+
+async function callDevice(config: Config, path: "/api/status" | "/api/led" | "/api/restart" | "/api/display", init?: RequestInit) {
   try {
-    return await fetch(`${config.baseUrl}${path}`, {
+    return await fetch(`${config.device.baseUrl}${path}`, {
       ...init,
       cache: "no-store",
       redirect: "error",
@@ -75,15 +106,18 @@ async function callDevice(path: "/api/status" | "/api/led" | "/api/restart" | "/
 export async function GET(request: NextRequest) {
   // Use request-time data so the response isn't frozen at build time.
   request.headers.get("host");
-  if (!getDeviceConfig()) return json({ configured: false, connected: false, message: "Falta configurar la dirección local y el token del ESP32." });
+  const config = getConfig(request.nextUrl.searchParams.get("device"));
+  if (!config) return json({ configured: false, connected: false, devices: [], message: "Falta configurar las placas (ESP32_DEVICES) y el token del ESP32." });
+  const which = { devices: config.devices, device: config.device.id };
 
-  const response = await callDevice("/api/status");
-  if (!response?.ok) return json({ configured: true, connected: false, message: "ESP32 no disponible. Revisá que esté conectado al Wi-Fi local." });
+  const response = await callDevice(config, "/api/status");
+  if (!response?.ok) return json({ ...which, configured: true, connected: false, message: `${config.device.name} no está disponible. Revisá que esté conectada al Wi-Fi local.` });
 
   const data = (await response.json().catch(() => null)) as DeviceReply | null;
-  if (!data || typeof data !== "object") return json({ configured: true, connected: false, message: "El ESP32 devolvió una respuesta que no pudimos leer." });
+  if (!data || typeof data !== "object") return json({ ...which, configured: true, connected: false, message: "La placa devolvió una respuesta que no pudimos leer." });
 
   return json({
+    ...which,
     configured: true,
     textSupported: data.textSupported === true,
     connected: data.online !== false,
@@ -93,7 +127,7 @@ export async function GET(request: NextRequest) {
     ...(typeof data.display === "string" ? { display: data.display } : {}),
     ...(typeof data.scene === "string" ? { scene: data.scene } : {}),
     ...(typeof data.weatherCity === "string" ? { weatherCity: data.weatherCity } : {}),
-    message: data.online === false ? "El ESP32 informa que está desconectado." : "ESP32 disponible en la red local.",
+    message: data.online === false ? `${config.device.name} informa que está desconectada.` : `${config.device.name} disponible en la red local.`,
   });
 }
 
@@ -122,10 +156,12 @@ export async function POST(request: NextRequest) {
   if (!body || typeof body !== "object") {
     return json({ configured: false, connected: false, message: "La instrucción no es válida." }, 400);
   }
-  if (!getDeviceConfig()) return json({ configured: false, connected: false, message: "Primero configuraremos la conexión local del ESP32." }, 503);
+  const config = getConfig("device" in body && typeof body.device === "string" ? body.device : null);
+  if (!config) return json({ configured: false, connected: false, message: "Primero configurá las placas y el token en .env.local." }, 503);
+  if ("device" in body && body.device !== config.device.id) return json({ message: "Esa placa no está en la lista." }, 404);
 
   if ("action" in body && body.action === "restart") {
-    const response = await callDevice("/api/restart", { method: "POST" });
+    const response = await callDevice(config, "/api/restart", { method: "POST" });
     if (!response?.ok) return json({ configured: true, connected: false, message: "No se pudo reiniciar el ESP32." }, 502);
     return json({ configured: true, connected: true, message: "Reinicio solicitado. La placa volverá a conectarse en unos segundos." });
   }
@@ -150,7 +186,7 @@ export async function POST(request: NextRequest) {
       place = await geocode(cityQuery);
       if (!place) return json({ message: `No encontramos "${cityQuery.trim()}". Probá con "Ciudad, país".` }, 404);
     }
-    const response = await callDevice("/api/display", {
+    const response = await callDevice(config, "/api/display", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: body.display, ...(lines ? { text: lines.join("\n") } : {}), ...(place ? { city: place.city } : {}) }),
@@ -167,7 +203,7 @@ export async function POST(request: NextRequest) {
     return json({ configured: false, connected: false, message: "La instrucción debe incluir led: true o led: false." }, 400);
   }
 
-  const response = await callDevice("/api/led", {
+  const response = await callDevice(config, "/api/led", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ on: body.led }),

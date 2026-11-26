@@ -14,6 +14,8 @@ type DeviceState = {
   scene?: string;
   textSupported?: boolean;
   weatherCity?: string;
+  devices?: { id: string; name: string }[];
+  device?: string;
   message?: string;
 };
 
@@ -47,18 +49,38 @@ export default function Dashboard() {
   const [displayBusy, setDisplayBusy] = useState(false);
   const [restartBusy, setRestartBusy] = useState(false);
   const [lastCheck, setLastCheck] = useState("Consultando el ESP32…");
+  // Placa elegida: se recuerda en este navegador.
+  const [selected, setSelected] = useState<string | null>(null);
+  const [devices, setDevices] = useState<{ id: string; name: string }[]>([]);
+
+  useEffect(() => {
+    try { setSelected(window.localStorage.getItem("esp32-device")); } catch { /* sin almacenamiento */ }
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
-      const response = await fetch("/api/device", { cache: "no-store" });
+      const query = selected ? `?device=${encodeURIComponent(selected)}` : "";
+      const response = await fetch(`/api/device${query}`, { cache: "no-store" });
       const state = (await response.json()) as DeviceState;
+      if (selected && state.device && state.device !== selected) setSelected(state.device);
+      if (state.devices) setDevices(state.devices);
       setDevice(state);
       setLastCheck(new Intl.DateTimeFormat("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date()));
     } catch {
       setDevice({ ...initialState, message: "No se pudo consultar el panel local." });
       setLastCheck("Sin respuesta del panel");
     }
-  }, []);
+  }, [selected]);
+
+  function chooseDevice(id: string) {
+    if (id === selected) return;
+    try { window.localStorage.setItem("esp32-device", id); } catch { /* sin almacenamiento */ }
+    setSelected(id);
+    setDevice({ ...initialState, devices, device: id, message: "Consultando la placa…" });
+    setLastCheck("Consultando…");
+    setTextFeedback("");
+    setCityFeedback("");
+  }
 
   useEffect(() => {
     void refresh();
@@ -75,7 +97,7 @@ export default function Dashboard() {
       const response = await fetch("/api/device", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ display: mode, ...(mode === "text" ? { text: draft } : {}), ...(city ? { city } : {}) }),
+        body: JSON.stringify({ device: device.device, display: mode, ...(mode === "text" ? { text: draft } : {}), ...(city ? { city } : {}) }),
       });
       const result = (await response.json()) as DeviceState;
       if (!response.ok) throw new Error(result.message ?? "No se pudo cambiar la pantalla.");
@@ -99,7 +121,7 @@ export default function Dashboard() {
       const response = await fetch("/api/device", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "restart" }),
+        body: JSON.stringify({ device: device.device, action: "restart" }),
       });
       const result = (await response.json()) as DeviceState;
       if (!response.ok) throw new Error(result.message ?? "No se pudo reiniciar la placa.");
@@ -143,6 +165,16 @@ export default function Dashboard() {
       </header>
       <main className="container dashboard">
         <h1>Panel de control</h1>
+        {devices.length > 1 && (
+          <nav className="device-picker" aria-label="Elegir placa">
+            {devices.map((d) => (
+              <button key={d.id} className="control" aria-pressed={d.id === device.device}
+                onClick={() => chooseDevice(d.id)}>
+                {d.name}
+              </button>
+            ))}
+          </nav>
+        )}
         <section className="metrics" aria-label="Estado de la placa">
           <article className="card metric">
             <h2>Conexión</h2>

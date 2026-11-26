@@ -86,9 +86,11 @@ cp .env.example .env.local
 Edit `.env.local`:
 
 ```sh
-ESP32_BASE_URL=http://<the IP shown on the screen>
+ESP32_DEVICES=Console=<the IP shown on the screen>
 ESP32_API_TOKEN=<the same token as in wifi_secrets.py>
 ```
+
+With several boards, list them as `Name=IP` separated by commas, for example `ESP32_DEVICES=Console=192.168.1.50,Holo=192.168.1.51`. They all use the same token, so load the same `wifi_secrets.py` on each one. The panel shows a button per board and remembers the last one you picked. A single `ESP32_BASE_URL=http://<ip>` from older versions still works.
 
 Then start it:
 
@@ -102,7 +104,7 @@ Open http://localhost:3000. Wait for **Conectado** (the interface is in Spanish)
 
 | Problem | What to check |
 |---|---|
-| Panel shows **Desconectado** | The board's IP may have changed (it comes from DHCP). Read it on the screen, update `ESP32_BASE_URL` and restart `npm run dev`. Reserving the IP in your router avoids this. |
+| Panel shows **Desconectado** | The board's IP may have changed (it comes from DHCP). Read it on the screen, update its IP in `ESP32_DEVICES` and restart `npm run dev`. Reserving the IP in your router avoids this. |
 | Port busy | Close the REPL or any other serial monitor. |
 | White screen but the API answers | Check VCC/GND and the SPI wires by GPIO label, then run `mpremote connect "$PORT" run demo_pantalla.py`. |
 | Guest network | Some guest networks isolate devices. Use a network where the computer can reach the board. |
