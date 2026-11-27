@@ -1,7 +1,7 @@
 import { displayLines } from "@/components/display-text";
 import { NextRequest } from "next/server";
 
-type DeviceReply = { online?: unknown; led?: unknown; uptime?: unknown; ip?: unknown; display?: unknown; scene?: unknown; textSupported?: unknown; weatherCity?: unknown };
+type DeviceReply = { online?: unknown; led?: unknown; uptime?: unknown; ip?: unknown; display?: unknown; scene?: unknown; textSupported?: unknown; weatherCity?: unknown; weather?: unknown };
 type GeoResult = { name?: unknown; latitude?: unknown; longitude?: unknown; admin1?: unknown; country?: unknown };
 
 const plain = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -127,8 +127,23 @@ export async function GET(request: NextRequest) {
     ...(typeof data.display === "string" ? { display: data.display } : {}),
     ...(typeof data.scene === "string" ? { scene: data.scene } : {}),
     ...(typeof data.weatherCity === "string" ? { weatherCity: data.weatherCity } : {}),
+    ...(readWeather(data.weather) ? { weather: readWeather(data.weather) } : {}),
     message: data.online === false ? `${config.device.name} informa que está desconectada.` : `${config.device.name} disponible en la red local.`,
   });
+}
+
+// Último dato de clima que tiene la placa (firmware con "weather" en /api/status).
+function readWeather(raw: unknown) {
+  if (!raw || typeof raw !== "object") return null;
+  const w = raw as Record<string, unknown>;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const temp = num(w.temp);
+  if (temp === null) return null;
+  return {
+    temp, feels: num(w.feels), hum: num(w.hum), code: num(w.code) ?? 0, day: w.day !== false,
+    max: num(w.max), min: num(w.min), rain: num(w.rain),
+    time: typeof w.time === "string" ? w.time.slice(0, 5) : "",
+  };
 }
 
 export async function POST(request: NextRequest) {

@@ -1,86 +1,107 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { displayLines } from "./display-text";
+import { ScreenPreview, type PreviewMode, type SceneId, type WeatherData } from "./screen-preview";
+
+type Board = { id: string; name: string };
+type Choice = SceneId | "text";
 
 type DeviceState = {
   configured: boolean;
   connected: boolean;
-  led?: boolean;
   uptime?: number;
   ip?: string;
   display?: string;
   scene?: string;
   textSupported?: boolean;
   weatherCity?: string;
-  devices?: { id: string; name: string }[];
+  weather?: WeatherData;
+  devices?: Board[];
   device?: string;
   message?: string;
 };
 
-const initialState: DeviceState = {
-  configured: false,
-  connected: false,
-  message: "Todavía no configuramos la conexión Wi-Fi del ESP32.",
-};
+const initialState: DeviceState = { configured: true, connected: false, message: "Consultando la placa…" };
 
-function Icon({ name, size = 20 }: { name: "chip" | "wifi"; size?: number }) {
-  const common = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true as const };
-  if (name === "chip") return <svg {...common}><rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9 9h6v6H9zM9 1v4m6-4v4m-6 14v4m6-4v4M1 9h4m14 0h4M1 15h4m14 0h4"/></svg>;
-  return <svg {...common}><path d="M5 9a11 11 0 0 1 14 0M8 12a6.5 6.5 0 0 1 8 0m-5 3a2 2 0 0 1 2 0m-1 4h.01"/></svg>;
+// hue: el color propio de cada escena, tomado de lo que muestra.
+const SCENES: { id: Choice; label: string; about: string; hue: string }[] = [
+  { id: "weather", label: "Clima", about: "Clima actual de una ciudad", hue: "#0aa0a8" },
+  { id: "text", label: "Texto", about: "Tu mensaje, en dos líneas", hue: "#f4f7f5" },
+  { id: "status", label: "Estado e IP", about: "Wi-Fi y dirección de la placa", hue: "#2eae62" },
+  { id: "console", label: "Consola", about: "Arranque de MicroPython", hue: "#3dfc35" },
+  { id: "hacker", label: "Terminal hacker", about: "Una intrusión de película", hue: "#22c55e" },
+  { id: "sunset", label: "Atardecer", about: "Sol sobre el agua, en píxeles", hue: "#ffd069" },
+  { id: "animation", label: "Animación", about: "Una pelota que rebota", hue: "#63e4e9" },
+  { id: "colors", label: "Colores", about: "Prueba de color RGB565", hue: "#f957a7" },
+  { id: "fatal", label: "Error fatal", about: "Pantalla roja que parpadea", hue: "#e00000" },
+  { id: "random", label: "Aleatorio", about: "Cambia de escena sola", hue: "#a6b2ac" },
+];
 
-}
+const sceneOf = (id?: string) => SCENES.find((scene) => scene.id === id);
 
 function formatUptime(seconds?: number) {
   if (seconds === undefined || !Number.isFinite(seconds)) return "—";
-  const hours = Math.floor(seconds / 3600);
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
+  if (days) return `${days} d ${hours} h`;
   return hours ? `${hours} h ${minutes} min` : `${minutes} min`;
+}
+
+const clock = () => new Intl.DateTimeFormat("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).format(new Date());
+const titleCase = (value: string) => value.toLowerCase().replace(/(^|[\s'-])\p{L}/gu, (c) => c.toUpperCase());
+
+function Mark() {
+  // La pantalla de la consola: barra de título, una línea y un cursor.
+  return (
+    <span className="mark" aria-hidden="true">
+      <svg width="18" height="18" viewBox="0 0 18 18" shapeRendering="crispEdges">
+        <rect x="2" y="3" width="14" height="3" fill="currentColor" />
+        <rect x="2" y="9" width="8" height="2" fill="currentColor" opacity=".55" />
+        <rect x="2" y="13" width="3" height="3" fill="currentColor" />
+      </svg>
+    </span>
+  );
 }
 
 export default function Dashboard() {
   const [device, setDevice] = useState<DeviceState>(initialState);
-  const [draft, setDraft] = useState("");
-  const [textFeedback, setTextFeedback] = useState("");
-  const [cityDraft, setCityDraft] = useState("");
-  const [cityFeedback, setCityFeedback] = useState("");
-  const lines = displayLines(draft);
-  const [displayBusy, setDisplayBusy] = useState(false);
+  const [devices, setDevices] = useState<Board[]>([]);
+  const [selectedBoard, setSelectedBoard] = useState<string | null>(null);
+  const [others, setOthers] = useState<Record<string, boolean>>({});
+  const [lastCheck, setLastCheck] = useState("—");
+  const [choice, setChoice] = useState<Choice | null>(null);
+  const [sending, setSending] = useState(false);
   const [restartBusy, setRestartBusy] = useState(false);
-  const [lastCheck, setLastCheck] = useState("Consultando el ESP32…");
-  // Placa elegida: se recuerda en este navegador.
-  const [selected, setSelected] = useState<string | null>(null);
-  const [devices, setDevices] = useState<{ id: string; name: string }[]>([]);
+  const [draft, setDraft] = useState("");
+  const [cityDraft, setCityDraft] = useState("");
+  const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+  const stageRef = useRef<HTMLElement>(null);
+
+  const lines = displayLines(draft);
+  const draftInvalid = draft.trim() !== "" && !lines;
+  // Caracteres que la fuente de la placa no tiene (los acentos se quitan solos).
+  const badChars = [...new Set(draft.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/[A-Z0-9 .!?:-]/g, ""))].join(" ");
 
   useEffect(() => {
-    try { setSelected(window.localStorage.getItem("esp32-device")); } catch { /* sin almacenamiento */ }
+    try { setSelectedBoard(window.localStorage.getItem("esp32-device")); } catch { /* sin almacenamiento */ }
   }, []);
 
   const refresh = useCallback(async () => {
     try {
-      const query = selected ? `?device=${encodeURIComponent(selected)}` : "";
+      const query = selectedBoard ? `?device=${encodeURIComponent(selectedBoard)}` : "";
       const response = await fetch(`/api/device${query}`, { cache: "no-store" });
       const state = (await response.json()) as DeviceState;
-      if (selected && state.device && state.device !== selected) setSelected(state.device);
+      if (selectedBoard && state.device && state.device !== selectedBoard) setSelectedBoard(state.device);
       if (state.devices) setDevices(state.devices);
       setDevice(state);
-      setLastCheck(new Intl.DateTimeFormat("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date()));
+      setLastCheck(clock());
     } catch {
-      setDevice({ ...initialState, message: "No se pudo consultar el panel local." });
-      setLastCheck("Sin respuesta del panel");
+      setDevice((current) => ({ ...current, connected: false, message: "El panel local no responde. ¿Sigue corriendo npm run dev?" }));
     }
-  }, [selected]);
-
-  function chooseDevice(id: string) {
-    if (id === selected) return;
-    try { window.localStorage.setItem("esp32-device", id); } catch { /* sin almacenamiento */ }
-    setSelected(id);
-    setDevice({ ...initialState, devices, device: id, message: "Consultando la placa…" });
-    setLastCheck("Consultando…");
-    setTextFeedback("");
-    setCityFeedback("");
-  }
+  }, [selectedBoard]);
 
   useEffect(() => {
     void refresh();
@@ -88,34 +109,91 @@ export default function Dashboard() {
     return () => window.clearInterval(timer);
   }, [refresh]);
 
-  async function setDisplay(mode: "status" | "sunset" | "colors" | "animation" | "text" | "console" | "hacker" | "fatal" | "weather" | "random", city?: string) {
-    if (!device.connected || displayBusy) return;
-    setTextFeedback("");
-    setCityFeedback("");
-    setDisplayBusy(true);
+  // La primera vez que la placa responde, el escenario arranca en lo que está mostrando.
+  useEffect(() => {
+    if (choice === null && device.connected && device.display) {
+      setChoice(sceneOf(device.display) ? (device.display as Choice) : "status");
+    }
+  }, [choice, device.connected, device.display]);
+
+  // Estado de las otras placas, para el punto de cada pestaña.
+  const current = device.device;
+  useEffect(() => {
+    const rest = devices.filter((board) => board.id !== current);
+    if (!rest.length) return;
+    let alive = true;
+    const check = async () => {
+      const results = await Promise.all(rest.map(async (board) => {
+        try {
+          const response = await fetch(`/api/device?device=${encodeURIComponent(board.id)}`, { cache: "no-store" });
+          return [board.id, ((await response.json()) as DeviceState).connected] as const;
+        } catch {
+          return [board.id, false] as const;
+        }
+      }));
+      if (alive) setOthers((prev) => ({ ...prev, ...Object.fromEntries(results) }));
+    };
+    void check();
+    const timer = window.setInterval(() => void check(), 15000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [devices, current]);
+
+  function chooseBoard(id: string) {
+    if (id === device.device) return;
+    try { window.localStorage.setItem("esp32-device", id); } catch { /* sin almacenamiento */ }
+    setSelectedBoard(id);
+    setDevice({ ...initialState, devices, device: id });
+    setChoice(null);
+    setLastCheck("—");
+    setFeedback(null);
+  }
+
+  function pickScene(id: Choice) {
+    setChoice(id);
+    setFeedback(null);
+    // En el celular el escenario queda arriba de la lista: volver a él.
+    if (window.matchMedia("(max-width: 900px)").matches) {
+      stageRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
+  const online = device.connected;
+  const boardName = devices.find((board) => board.id === device.device)?.name ?? "ESP32";
+  const selected: Choice = choice ?? "status";
+  const selectedScene = sceneOf(selected)!;
+  const onScreenNow = online && device.display === selected;
+  const city = device.weatherCity ? titleCase(device.weatherCity) : undefined;
+  const changed = (selected === "weather" && cityDraft.trim() !== "") || selected === "text";
+  const ready = selected !== "text" || (lines !== null && device.textSupported === true);
+  const buttonIsDone = onScreenNow && !changed;
+
+  async function show() {
+    if (!online || sending || !ready || buttonIsDone) return;
+    setSending(true);
+    setFeedback(null);
+    const body: Record<string, string | undefined> = { device: device.device, display: selected };
+    if (selected === "text") body.text = draft;
+    if (selected === "weather" && cityDraft.trim()) body.city = cityDraft.trim();
     try {
       const response = await fetch("/api/device", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ device: device.device, display: mode, ...(mode === "text" ? { text: draft } : {}), ...(city ? { city } : {}) }),
+        body: JSON.stringify(body),
       });
       const result = (await response.json()) as DeviceState;
-      if (!response.ok) throw new Error(result.message ?? "No se pudo cambiar la pantalla.");
-      setDevice((current) => ({ ...current, ...result }));
-      if (mode === "text") setTextFeedback("Mensaje enviado a la pantalla.");
-      if (city) { setCityFeedback(result.message ?? ""); setCityDraft(""); }
+      if (!response.ok) throw new Error(result.message ?? "La placa no aceptó el cambio.");
+      setDevice((state) => ({ ...state, ...result, connected: true }));
+      if (body.city) { setCityDraft(""); setFeedback({ ok: true, text: result.message ?? "Listo." }); }
       await refresh();
     } catch (error) {
-      if (mode === "text") setTextFeedback(error instanceof Error ? error.message : "Error de conexión.");
-      if (city) setCityFeedback(error instanceof Error ? error.message : "Error de conexión.");
-      setDevice((current) => ({ ...current, message: error instanceof Error ? error.message : "Error de conexión." }));
+      setFeedback({ ok: false, text: error instanceof Error ? error.message : "Error de conexión." });
     } finally {
-      setDisplayBusy(false);
+      setSending(false);
     }
   }
 
-  async function restartDevice() {
-    if (!device.connected || restartBusy || !window.confirm("¿Reiniciar el ESP32? La pantalla se volverá a inicializar y la placa volverá a conectarse al Wi-Fi.")) return;
+  async function restart() {
+    if (!online || restartBusy || !window.confirm(`¿Reiniciar ${boardName}? La pantalla se apaga unos segundos y la placa vuelve a conectarse al Wi-Fi.`)) return;
     setRestartBusy(true);
     try {
       const response = await fetch("/api/device", {
@@ -125,146 +203,153 @@ export default function Dashboard() {
       });
       const result = (await response.json()) as DeviceState;
       if (!response.ok) throw new Error(result.message ?? "No se pudo reiniciar la placa.");
-      setDevice((current) => ({ ...current, connected: false, message: result.message }));
-      window.setTimeout(() => void refresh(), 2500);
+      setDevice((state) => ({ ...state, connected: false, message: "Reiniciando… vuelve en unos segundos." }));
     } catch (error) {
-      setDevice((current) => ({ ...current, message: error instanceof Error ? error.message : "Error al reiniciar." }));
+      setDevice((state) => ({ ...state, message: (error as Error).message }));
     } finally {
-      window.setTimeout(() => setRestartBusy(false), 2500);
+      window.setTimeout(() => { setRestartBusy(false); void refresh(); }, 6000);
     }
   }
 
-  const online = device.connected;
-
-  const modes = [
-    ["status", "Estado e IP"],
-    ["sunset", "Atardecer"],
-    ["colors", "Colores"],
-    ["animation", "Animación"],
-    ["console", "Consola"],
-    ["hacker", "Terminal hacker"],
-    ["fatal", "Error fatal"],
-    ["weather", "Clima"],
-    ["random", "Aleatorio"],
-  ] as const;
-  const labelOf = (mode?: string) => modes.find(([key]) => key === mode)?.[1];
-  const previewMode = device.display === "random" ? device.scene : device.display;
-  const currentMode = device.display === "text"
-    ? "Texto personalizado"
-    : device.display === "random"
-      ? `Aleatorio${labelOf(device.scene) ? ` · ${labelOf(device.scene)}` : ""}`
-      : labelOf(device.display);
+  // Lo que dibuja el escenario: la escena elegida, con los ajustes que se están escribiendo.
+  const stageMode: PreviewMode = !online ? "offline" : selected;
+  const typingCity = selected === "weather" && cityDraft.trim() !== "";
+  const stageCity = typingCity ? cityDraft.trim().toUpperCase() : device.weatherCity;
+  const stageWeather = typingCity ? null : device.weather;
+  const nowLabel = device.display === "random"
+    ? `Aleatorio · ${sceneOf(device.scene)?.label ?? "—"}`
+    : sceneOf(device.display)?.label ?? "—";
 
   return (
-    <>
+    <div className="app">
       <header className="topbar">
-        <div className="container topbar-inner">
-          <span className="brand"><Icon name="chip" size={18} /> Fieldnotes <span>/ ESP32</span></span>
-          <span className="network"><Icon name="wifi" size={16} /> Red local</span>
+        <div className="wrap topbar-inner">
+          <span className="brand"><Mark /> ESP32 Sci-Fi</span>
+          {devices.length > 1 && (
+            <nav className="boards" aria-label="Placas">
+              {devices.map((board) => {
+                const isCurrent = board.id === device.device;
+                const up = isCurrent ? online : others[board.id];
+                return (
+                  <button key={board.id} type="button" className="board-tab" aria-current={isCurrent ? "page" : undefined}
+                    onClick={() => chooseBoard(board.id)}>
+                    <span className="dot" data-up={up === undefined ? undefined : String(up)} aria-hidden="true" />
+                    {board.name}
+                    <span className="sr-only">{up === undefined ? "" : up ? " (conectada)" : " (sin conexión)"}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          )}
         </div>
       </header>
-      <main className="container dashboard">
-        <h1>Panel de control</h1>
-        {devices.length > 1 && (
-          <nav className="device-picker" aria-label="Elegir placa">
-            {devices.map((d) => (
-              <button key={d.id} className="control" aria-pressed={d.id === device.device}
-                onClick={() => chooseDevice(d.id)}>
-                {d.name}
-              </button>
-            ))}
-          </nav>
-        )}
-        <section className="metrics" aria-label="Estado de la placa">
-          <article className="card metric">
-            <h2>Conexión</h2>
-            <strong className="connection"><span className="dot" data-online={online} />
-              {online ? "Conectado" : "Desconectado"}
-            </strong>
-            <p>{device.message}</p>
-            <small>Última consulta · {lastCheck}</small>
-          </article>
-          <article className="card metric">
-            <h2>IP local</h2>
-            <strong className="mono">{online && device.ip ? device.ip : "—"}</strong>
-            <p>ESP-WROOM-32 · MicroPython</p>
-          </article>
-          <article className="card metric">
-            <h2>Tiempo activa</h2>
-            <strong>{formatUptime(device.uptime)}</strong>
-            <button className="control restart" disabled={!online || restartBusy}
-              onClick={() => void restartDevice()}>
-              {restartBusy ? "Reiniciando…" : "Reiniciar placa"}
-            </button>
-          </article>
-        </section>
-        <section className="controls" aria-label="Controles de pantalla">
-          <article className="card panel">
-            <h2>Escenas de pantalla</h2>
-            <p className="mono">ST7735 · 128 × 128</p>
-            <div className="scene-preview" data-mode={online ? previewMode : undefined}
-              role="img" aria-label={currentMode && online ? `Vista previa: ${currentMode}` : "Pantalla en espera"}>
-              {online && previewMode === "animation" && <span className="preview-orb" />}
-              {online && previewMode === "status" && <span>ESP32 ONLINE<br />{device.ip}</span>}
-              {online && previewMode === "console" && <span className="preview-console">{">>> import main\nwifi: connected\napi: :80\n>>> _"}</span>}
-              {online && previewMode === "hacker" && <span className="preview-console">{"$ ssh root@node-7\nACCESS GRANTED\n3F9A 4B1C D29E\nDECR[######] 60%"}</span>}
-              {online && previewMode === "fatal" && <span className="preview-fatal">FATAL<br />ERROR</span>}
-              {online && previewMode === "weather" && <span>CLIMA<br />{device.weatherCity}</span>}
-              {online && device.display === "text" && <span>TEXTO ACTIVO</span>}
-              {(!online || !currentMode) && <span>EN ESPERA</span>}
+
+      <main className="wrap">
+        <div className="title-row">
+          <div>
+            <div className="title-line">
+              <h1>{boardName}</h1>
+              <span className="pill" data-up={String(online)}>
+                <span className="dot" data-up={String(online)} aria-hidden="true" />
+                {online ? "Conectada" : restartBusy ? "Reiniciando" : "Sin conexión"}
+              </span>
             </div>
-            <div className="mode-status">
-              <span>Modo actual</span>
-              <strong>{online ? currentMode ?? "Sin informar" : "—"}</strong>
+            <p className="meta">
+              <span className="mono">{online && device.ip ? device.ip : "—"}</span>
+              <span className="sep" aria-hidden="true">·</span>
+              <span>activa <span className="mono">{online ? formatUptime(device.uptime) : "—"}</span></span>
+              <span className="sep" aria-hidden="true">·</span>
+              <span>consultada <span className="mono">{lastCheck}</span></span>
+            </p>
+            {!online && <p className="notice" role="status">{device.message}</p>}
+          </div>
+          <button type="button" className="ghost" disabled={!online || restartBusy} onClick={() => void restart()}>
+            {restartBusy ? "Reiniciando…" : "Reiniciar"}
+          </button>
+        </div>
+
+        <div className="layout">
+          <section className="stage" ref={stageRef} aria-labelledby="stage-title">
+            <div className="stage-head">
+              <h2 id="stage-title">{selectedScene.label}</h2>
+              <span className={onScreenNow ? "tag on" : "tag"}>{onScreenNow ? "En pantalla" : online ? `Ahora: ${nowLabel}` : "Sin señal"}</span>
             </div>
-            <div className="display-modes" role="group" aria-label="Modos de pantalla">
-              {modes.map(([mode, label]) => (
-                <button key={mode} className="control" disabled={!online || displayBusy}
-                  onClick={() => void setDisplay(mode)} aria-pressed={device.display === mode}>
-                  {label}
-                </button>
-              ))}
+
+            <div className="screen-well">
+              <ScreenPreview mode={stageMode} ip={device.ip} city={stageCity} weather={stageWeather}
+                lines={lines ?? undefined} size={256} animate
+                label={online ? `Vista de la escena ${selectedScene.label}` : "La placa no responde"} />
             </div>
-          </article>
-          <article className="card panel">
-            <form className="display-text-form" onSubmit={(event) => {
-                event.preventDefault();
-                if (lines && device.textSupported) void setDisplay("text");
-              }}>
-                <label htmlFor="screen-text">Texto personalizado</label>
-                <input id="screen-text" value={draft} maxLength={30} placeholder="VOLVÉ EN 5 MIN"
-                  onChange={(event) => { setDraft(event.target.value); setTextFeedback(""); }}
-                  aria-describedby="screen-text-help" />
-                <small id="screen-text-help">Hasta 30 caracteres. Letras, números y . ! ? : -</small>
-                <div className="display-text-preview" aria-label="Vista previa del texto">
-                  {lines ? lines.map((line, index) => <div key={index}>{line}</div>) : "VISTA PREVIA"}
+
+            <form className="settings" onSubmit={(event) => { event.preventDefault(); void show(); }}>
+              {selected === "weather" && (
+                <div className="field">
+                  <label htmlFor="weather-city">Ciudad</label>
+                  <input id="weather-city" value={cityDraft} maxLength={60} autoComplete="off"
+                    placeholder={city ?? "Buenos Aires"} aria-describedby="weather-city-help"
+                    onChange={(event) => { setCityDraft(event.target.value); setFeedback(null); }} />
+                  <p id="weather-city-help" className="help">
+                    Ahora muestra {city ?? "—"}. Sumá el país si hay varias con el mismo nombre. Datos de Open-Meteo, cada 15 min mientras se ve el clima.
+                  </p>
                 </div>
-                <button className="primary-button" disabled={!online || !device.textSupported || !lines || displayBusy}>
-                  Mostrar en pantalla
+              )}
+              {selected === "text" && (
+                <div className="field">
+                  <label htmlFor="screen-text">Mensaje</label>
+                  <input id="screen-text" value={draft} maxLength={30} autoComplete="off" spellCheck={false}
+                    placeholder="Volvé en 5 min" aria-invalid={draftInvalid || undefined} aria-describedby="screen-text-help"
+                    onChange={(event) => { setDraft(event.target.value); setFeedback(null); }} />
+                  <p id="screen-text-help" className={draftInvalid ? "help error" : "help"}>
+                    <span>{draftInvalid ? `La pantalla no tiene: ${badChars || "?"}. Usá letras, números y . ! ? : -` : "Hasta 30 caracteres, en dos líneas de 15."}</span>
+                    <span className="mono count">{draft.length}/30</span>
+                  </p>
+                </div>
+              )}
+              {selected !== "weather" && selected !== "text" && <p className="help">{selectedScene.about}. Esta escena no tiene ajustes.</p>}
+
+              <div className="actions">
+                <button className="primary" disabled={!online || sending || !ready || buttonIsDone}>
+                  {sending ? "Enviando…" : buttonIsDone ? "En pantalla" : "Mostrar en pantalla"}
                 </button>
-                {online && !device.textSupported && <small>Actualizá los dos archivos de la placa para habilitar el texto.</small>}
-                <small role="status">{textFeedback}</small>
+                {feedback && <span className={feedback.ok ? "feedback" : "feedback error"} role="status">{feedback.text}</span>}
+              </div>
             </form>
-            <form className="display-text-form weather-form" onSubmit={(event) => {
-                event.preventDefault();
-                if (cityDraft.trim()) void setDisplay("weather", cityDraft);
-              }}>
-                <label htmlFor="weather-city">Ciudad del clima</label>
-                <input id="weather-city" value={cityDraft} maxLength={60}
-                  placeholder={device.weatherCity ? device.weatherCity.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) : "Buenos Aires"}
-                  onChange={(event) => { setCityDraft(event.target.value); setCityFeedback(""); }}
-                  aria-describedby="weather-city-help" />
-                <small id="weather-city-help">
-                  Actual: {device.weatherCity ?? "—"}. Para desambiguar, escribí &quot;Ciudad, país&quot;. Los datos son de Open-Meteo y la placa los consulta cada 15 min, solo con la escena en pantalla.
-                </small>
-                <button className="primary-button" disabled={!online || !cityDraft.trim() || displayBusy}>
-                  Mostrar clima
-                </button>
-                <small role="status">{cityFeedback}</small>
-            </form>
-          </article>
-        </section>
+          </section>
+
+          <section className="scenes" aria-labelledby="scenes-title">
+            <h2 className="eyebrow" id="scenes-title"><span className="dot" data-up="true" aria-hidden="true" />Escenas</h2>
+            <ul className="scene-list">
+              {SCENES.map((scene) => {
+                const isOn = online && device.display === scene.id;
+                return (
+                  <li key={scene.id}>
+                    <button type="button" className="scene-row" aria-pressed={scene.id === selected}
+                      style={{ "--hue": scene.hue } as React.CSSProperties} onClick={() => pickScene(scene.id)}>
+                      <ScreenPreview mode={scene.id} ip={device.ip} city={device.weatherCity} weather={device.weather}
+                        lines={scene.id === "text" ? lines ?? ["HOLA"] : undefined} size={48} />
+                      <span className="scene-text">
+                        <span className="scene-name">{scene.label}</span>
+                        <span className="scene-about">{scene.about}</span>
+                      </span>
+                      {isOn && <span className="tag on">En pantalla</span>}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        </div>
       </main>
-    </>
+
+      <footer className="footer">
+        <div className="wrap footer-inner">
+          <a href="https://rolonerdea.com" target="_blank" rel="noreferrer" className="byline">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/rolo-nerdea.svg" width={24} height={24} alt="" />
+            By Rolo Nerdea
+          </a>
+        </div>
+      </footer>
+    </div>
   );
 }

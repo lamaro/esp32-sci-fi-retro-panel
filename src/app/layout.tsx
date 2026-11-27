@@ -6,14 +6,11 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "ESP32 Studio | Control local",
-  description: "Panel local para monitorear y controlar tu ESP32.",
+  title: "ESP32 Sci-Fi Panel",
+  description: "Panel local para elegir qué muestra la pantalla de cada placa ESP32.",
 };
 
-export const viewport: Viewport = { themeColor: [
-  { media: "(prefers-color-scheme: light)", color: "#fafafa" },
-  { media: "(prefers-color-scheme: dark)", color: "#0a0a0a" },
-] };
+export const viewport: Viewport = { themeColor: "#0a0e0d", colorScheme: "dark" };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
