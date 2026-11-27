@@ -143,6 +143,12 @@ function readWeather(raw: unknown) {
     temp, feels: num(w.feels), hum: num(w.hum), code: num(w.code) ?? 0, day: w.day !== false,
     max: num(w.max), min: num(w.min), rain: num(w.rain),
     time: typeof w.time === "string" ? w.time.slice(0, 5) : "",
+    // Pronóstico: [día de la semana, día del mes, código, máx, mín, lluvia] por día.
+    days: Array.isArray(w.days)
+      ? w.days.slice(0, 3).flatMap((d) => Array.isArray(d) && typeof d[0] === "string" && num(d[3]) !== null
+        ? [{ weekday: String(d[0]).slice(0, 3), date: num(d[1]) ?? 0, code: num(d[2]) ?? 0, max: num(d[3])!, min: num(d[4]), rain: num(d[5]) }]
+        : [])
+      : [],
   };
 }
 
@@ -182,7 +188,7 @@ export async function POST(request: NextRequest) {
   }
 
   if ("display" in body) {
-    const modes = ["status", "sunset", "colors", "animation", "text", "console", "hacker", "fatal", "weather", "random"] as const;
+    const modes = ["status", "sunset", "colors", "animation", "text", "console", "hacker", "fatal", "weather", "forecast", "random"] as const;
     if (typeof body.display !== "string" || !modes.includes(body.display as (typeof modes)[number])) {
       return json({ configured: false, connected: false, message: "Elegí un modo de pantalla válido." }, 400);
     }
@@ -192,7 +198,7 @@ export async function POST(request: NextRequest) {
     if (body.display === "text" && !lines) {
       return json({ message: "Escribí hasta 30 caracteres válidos." }, 400);
     }
-    const cityQuery = body.display === "weather" && "city" in body ? body.city : undefined;
+    const cityQuery = (body.display === "weather" || body.display === "forecast") && "city" in body ? body.city : undefined;
     let place: Awaited<ReturnType<typeof geocode>> = null;
     if (cityQuery !== undefined) {
       if (typeof cityQuery !== "string" || !cityQuery.trim() || cityQuery.length > 60) {
@@ -210,7 +216,7 @@ export async function POST(request: NextRequest) {
     return json({
       configured: true, connected: true, display: body.display,
       ...(place ? { weatherCity: place.city.name } : {}),
-      message: place ? `Clima de ${place.label}.` : "Modo enviado a la pantalla.",
+      message: place ? `${body.display === "forecast" ? "Pronóstico" : "Clima"} de ${place.label}.` : "Modo enviado a la pantalla.",
     });
   }
 

@@ -3,7 +3,7 @@
 
 export type SceneId =
   | "status" | "sunset" | "colors" | "animation" | "console"
-  | "hacker" | "fatal" | "weather" | "random";
+  | "hacker" | "fatal" | "weather" | "forecast" | "random";
 
 export type PreviewMode = SceneId | "text" | "offline" | "idle";
 
@@ -30,7 +30,31 @@ function T({ x, y, s = 1, fill = C.white, anchor, children }: {
 export type WeatherData = {
   temp: number; feels: number | null; hum: number | null; code: number; day: boolean;
   max: number | null; min: number | null; rain: number | null; time: string;
+  days?: { weekday: string; date: number; code: number; max: number; min: number | null; rain: number | null }[];
 };
+
+// Ícono chico del pronóstico, como small_icon() en display_ui.py.
+function SmallIcon({ code, cx, cy }: { code: number; cx: number; cy: number }) {
+  const clear = code <= 1;
+  const partly = code === 2;
+  const fog = code === 45 || code === 48;
+  const rain = (code >= 51 && code <= 67) || (code >= 80 && code <= 82);
+  const snow = (code >= 71 && code <= 77) || code === 85 || code === 86;
+  const storm = code >= 95;
+  if (clear) return <circle cx={cx} cy={cy} r="7" fill={C.yellow} />;
+  if (fog) return <>{[20, 24, 18].map((w, i) => <rect key={i} x={cx - w / 2} y={cy - 6 + i * 5} width={w} height="2" fill={C.gray} />)}</>;
+  const color = storm ? "#4a5060" : rain ? "#8a8c92" : partly ? C.white : "#c6c9d2";
+  return <>
+    {partly && <circle cx={cx + 4} cy={cy - 4} r="5" fill={C.yellow} />}
+    <circle cx={cx - 6} cy={cy + 2} r="4" fill={color} />
+    <circle cx={cx + 1} cy={cy - 1} r="6" fill={color} />
+    <circle cx={cx + 7} cy={cy + 2} r="4" fill={color} />
+    <rect x={cx - 10} y={cy + 2} width="21" height="5" fill={color} />
+    {rain && [-6, 0, 6].map((x) => <rect key={x} x={cx + x} y={cy + 9} width="2" height="3" fill="#3d9fff" />)}
+    {snow && [-6, 0, 6].map((x) => <rect key={x} x={cx + x - 1} y={cy + 10} width="3" height="1" fill={C.white} />)}
+    {storm && <rect x={cx} y={cy + 8} width="3" height="6" fill={C.yellow} />}
+  </>;
+}
 
 type SceneProps = { mode: PreviewMode; ip?: string; city?: string; lines?: string[]; weather?: WeatherData | null };
 
@@ -132,6 +156,30 @@ function Scene({ mode, ip, city, lines, weather }: SceneProps) {
         <T x={6} y={82} s={0.95}>MAX {n(w?.max)}  MIN {n(w?.min)}</T>
         <T x={6} y={95} s={0.95}>HUMEDAD {n(w?.hum)}%</T>
         <T x={6} y={108} s={0.95}>PROB LLUVIA {n(w?.rain)}%</T>
+      </>;
+    }
+    case "forecast": {
+      const days = weather?.days?.length ? weather.days : null;
+      return <>
+        <rect width="128" height="128" fill={C.navy} />
+        <rect width="128" height="11" fill={C.teal} />
+        <T x={64} y={2} s={0.95} fill={C.navy} anchor="middle">{(city || "BUENOS AIRES").slice(0, 20)}</T>
+        {[0, 1, 2].map((i) => {
+          const day = days?.[i];
+          const cx = i * 43 + 21;
+          const n = (v?: number | null) => (v === undefined || v === null ? "--" : String(Math.round(v)));
+          return <g key={i}>
+            {i > 0 && <rect x={i * 43 - 1} y="15" width="1" height="92" fill="#4a5060" />}
+            <T x={cx} y={16} s={0.95} anchor="middle">{day ? `${day.weekday} ${day.date}` : "---"}</T>
+            {day ? <SmallIcon code={day.code} cx={cx} cy={38} /> : <rect x={cx - 10} y={34} width="20" height="8" fill="#4a5060" />}
+            <T x={cx} y={56} s={1.6} anchor="middle">{`${n(day?.max)}°`}</T>
+            <T x={cx} y={71} s={0.95} fill={C.teal} anchor="middle">{n(day?.min)}</T>
+            <T x={cx} y={85} s={0.95} fill="#3d9fff" anchor="middle">{day?.rain === null || day?.rain === undefined ? "--" : `${day.rain}%`}</T>
+          </g>;
+        })}
+        <rect x="6" y="106" width="116" height="1" fill={C.teal} />
+        <T x={4} y={114} s={0.95} fill={C.teal}>PRONOSTICO</T>
+        <T x={124} y={114} s={0.95} fill={C.teal} anchor="end">{weather?.time || "--:--"}</T>
       </>;
     }
     case "random":

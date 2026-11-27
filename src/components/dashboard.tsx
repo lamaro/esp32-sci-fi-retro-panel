@@ -28,6 +28,7 @@ const initialState: DeviceState = { configured: true, connected: false, message:
 // hue: el color propio de cada escena, tomado de lo que muestra.
 const SCENES: { id: Choice; label: string; about: string; hue: string }[] = [
   { id: "weather", label: "Clima", about: "Clima actual de una ciudad", hue: "#0aa0a8" },
+  { id: "forecast", label: "Pronóstico", about: "Los próximos 3 días", hue: "#3d9fff" },
   { id: "text", label: "Texto", about: "Tu mensaje, en dos líneas", hue: "#f4f7f5" },
   { id: "status", label: "Estado e IP", about: "Wi-Fi y dirección de la placa", hue: "#2eae62" },
   { id: "console", label: "Consola", about: "Arranque de MicroPython", hue: "#3dfc35" },
@@ -163,7 +164,8 @@ export default function Dashboard() {
   const selectedScene = sceneOf(selected)!;
   const onScreenNow = online && device.display === selected;
   const city = device.weatherCity ? titleCase(device.weatherCity) : undefined;
-  const changed = (selected === "weather" && cityDraft.trim() !== "") || selected === "text";
+  const hasCity = selected === "weather" || selected === "forecast";
+  const changed = (hasCity && cityDraft.trim() !== "") || selected === "text";
   const ready = selected !== "text" || (lines !== null && device.textSupported === true);
   const buttonIsDone = onScreenNow && !changed;
 
@@ -173,7 +175,7 @@ export default function Dashboard() {
     setFeedback(null);
     const body: Record<string, string | undefined> = { device: device.device, display: selected };
     if (selected === "text") body.text = draft;
-    if (selected === "weather" && cityDraft.trim()) body.city = cityDraft.trim();
+    if (hasCity && cityDraft.trim()) body.city = cityDraft.trim();
     try {
       const response = await fetch("/api/device", {
         method: "POST",
@@ -213,7 +215,7 @@ export default function Dashboard() {
 
   // Lo que dibuja el escenario: la escena elegida, con los ajustes que se están escribiendo.
   const stageMode: PreviewMode = !online ? "offline" : selected;
-  const typingCity = selected === "weather" && cityDraft.trim() !== "";
+  const typingCity = hasCity && cityDraft.trim() !== "";
   const stageCity = typingCity ? cityDraft.trim().toUpperCase() : device.weatherCity;
   const stageWeather = typingCity ? null : device.weather;
   const nowLabel = device.display === "random"
@@ -282,14 +284,14 @@ export default function Dashboard() {
             </div>
 
             <form className="settings" onSubmit={(event) => { event.preventDefault(); void show(); }}>
-              {selected === "weather" && (
+              {hasCity && (
                 <div className="field">
                   <label htmlFor="weather-city">Ciudad</label>
                   <input id="weather-city" value={cityDraft} maxLength={60} autoComplete="off"
                     placeholder={city ?? "Buenos Aires"} aria-describedby="weather-city-help"
                     onChange={(event) => { setCityDraft(event.target.value); setFeedback(null); }} />
                   <p id="weather-city-help" className="help">
-                    Ahora muestra {city ?? "—"}. Sumá el país si hay varias con el mismo nombre. Datos de Open-Meteo, cada 15 min mientras se ve el clima.
+                    Ahora muestra {city ?? "—"}; Clima y Pronóstico usan la misma ciudad. Sumá el país si hay varias con el mismo nombre. Datos de Open-Meteo, cada 15 min mientras se ve una de las dos.
                   </p>
                 </div>
               )}
@@ -305,7 +307,7 @@ export default function Dashboard() {
                   </p>
                 </div>
               )}
-              {selected !== "weather" && selected !== "text" && <p className="help">{selectedScene.about}. Esta escena no tiene ajustes.</p>}
+              {!hasCity && selected !== "text" && <p className="help">{selectedScene.about}. Esta escena no tiene ajustes.</p>}
 
               <div className="actions">
                 <button className="primary" disabled={!online || sending || !ready || buttonIsDone}>

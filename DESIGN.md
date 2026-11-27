@@ -27,7 +27,7 @@ Dark, quiet and slightly tinted, after [minimalar.com](https://minimalar.com), s
 3. **Two columns** (desktop):
    - **Left, the stage (sticky):** a large replica of the selected scene, its settings right under it, and one green *Mostrar en pantalla* button. When the selected scene is already on the screen and nothing changed, the button reads *En pantalla*.
    - **Right, the scenes:** one row per scene: thumbnail, name, one line on what it shows, and an *En pantalla* tag on the current one. Clicking a row selects it; it does not send anything.
-4. **Settings live in their scene.** *Clima* has the city. *Texto* is a scene and has the message. The replica updates as you type, so you see the result before sending it.
+4. **Settings live in their scene.** *Clima* and *Pronóstico* share the city. *Texto* is a scene and has the message. The replica updates as you type, so you see the result before sending it.
 
 On a phone the stage comes first and the scene list follows. Once you pick a scene, the page scrolls back to the stage.
 

@@ -1,6 +1,6 @@
 # ESP32 Retro Sci-Fi Panel
 
-A local Next.js control panel for the [ESP32 Retro Sci-Fi modules](https://github.com/lamaro/esp32-sci-fi-retro). It runs on your computer, talks to the board over your Wi-Fi network and switches its screen modes: status, console, hacker terminal, fatal error, weather, sunset, colors, animation, random and your own text.
+A local Next.js control panel for the [ESP32 Retro Sci-Fi modules](https://github.com/lamaro/esp32-sci-fi-retro). It runs on your computer, talks to the board over your Wi-Fi network and switches its screen modes: status, console, hacker terminal, fatal error, weather, 3-day forecast, sunset, colors, animation, random and your own text.
 
 ```
 browser ──► Next.js on localhost ──(HTTP + token, LAN)──► ESP32
